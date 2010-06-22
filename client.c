@@ -10,13 +10,12 @@
 
 #define PORT "6969"
 
-int put(const char* file, const char* server) {
+//returns a socket connected to the server
+int connect_serv(const char* server) {
   struct addrinfo hints;
   struct addrinfo* result;
   struct addrinfo* rp;
   int sfd, s;
-  FILE* fd;
-
 
   memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -51,89 +50,51 @@ int put(const char* file, const char* server) {
   }
   
   freeaddrinfo(result);
-
-  header_t header;
-
-  size_t filename_len = strlen(file);
-  make_header(&header, REQUEST_UP, filename_len);
-
-  //write the header and filename to the stream
-  if(6 != write(sfd, header.data, 6)) {
-    fprintf(stderr, "Socket write failed\n");
-    exit(EXIT_FAILURE);
-  }
   
-  //write the filename
-  if(filename_len != write(sfd, file, filename_len)) {
-    fprintf(stderr, "Socket write failed\n");
-    exit(EXIT_FAILURE);
-  }
+  return sfd;
+}
+
+int put(const char* file, const char* server) {
+  int sfd = connect_serv(server);
+
+  //create headers and send them
+  msg_header_t msg_header;
+  data_header_t data_header;
   
-  fd = fopen(file, "rb"); //open binary read file
-
-  if(!fd) {
-    fprintf(stderr, "File error\n");
+  make_msg_header(&msg_header, REQUEST_UP, file);
+  make_data_header(&data_header, file);
+  
+  if(msg_header.size != write(sfd, msg_header.data, msg_header.size)) {
+    fprintf(stderr, "Socket write with msg_header failed\n");
     exit(EXIT_FAILURE);
   }
 
-  fseek(fd, 0L, SEEK_END);
-  int32_t sz_file = (int32_t)ftell(fd);
-  fseek(fd, 0L, SEEK_SET);
-
-  //some status report
-  printf("Filename length: %d, Filesize: %d\n", filename_len, sz_file);
-
-  //file length
-  if(4 != write(sfd, &sz_file, 4)) {
-    fprintf(stderr, "Socket write failed\n");
+  if(data_header.size != write(sfd, data_header.data, data_header.size)) {
+    fprintf(stderr, "Socket write with data_header failed\n");
     exit(EXIT_FAILURE);
   }
 
-  //buffer the file and write it
-  void* filebuffer = malloc(sz_file);
-  if(filebuffer == NULL) {
-    fprintf(stderr, "Out of memory\n");
-    exit(EXIT_FAILURE);
-  }
+  free_data_header(&data_header);
 
-  if(sz_file != fread(filebuffer, 1, sz_file, fd)) {
-    fprintf(stderr, "File buffer borked\n");
-    exit(EXIT_FAILURE);
-  }
-
-  if(sz_file != write(sfd, filebuffer, sz_file)) {
-    fprintf(stderr, "Socket write failed\n");
-    exit(EXIT_FAILURE);
-  }
-
-  free(filebuffer);
-
-  //check for reply
   printf("Checking for reply\n");
-  size_t reply_size = 6 + filename_len;
-  char* rep_buffer = calloc(reply_size, 1); //space for header + filename + zero byte
 
-  if(reply_size != read(sfd, rep_buffer, reply_size)) {
+  //we expect the reply to be the same as our msg_header_data just with another opcode
+  //we change change the opcode of our msg_header to the expected and just memcmp
+  //the data
+  change_opcode(&msg_header, REPLY_UP);
+
+  char* rep_buffer = calloc(msg_header.size, 1);
+  
+  if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
     fprintf(stderr, "Socket read failed\n");
     exit(EXIT_FAILURE);
   }
   
-  //does this work?
-  if(REPLY_UP != (int16_t)rep_buffer[0]) {
-    fprintf(stderr, "Wrong reply\n");
-    exit(EXIT_FAILURE);
+  if(0 != memcmp(rep_buffer, msg_header.data, msg_header.size)) {
+    fprintf(stderr, "Reply was bogus, go panic\n");
   }
 
-  if(filename_len != (int32_t)rep_buffer[2]) {
-    fprintf(stderr, "Wrong filename length\n");
-    exit(EXIT_FAILURE);
-  }
-
-  if(!memcmp(&rep_buffer[6], file, filename_len)) {
-    fprintf(stderr, "Wrong filename\n");
-    exit(EXIT_FAILURE);
-  }
-
+  free_msg_header(&msg_header);
   free(rep_buffer);
   close(sfd);
 
