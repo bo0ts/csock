@@ -10,6 +10,8 @@
 #define REPLY_UP 0x04
 #define ERROR 0x05
 
+const char* op_tbl[6];
+
 typedef struct {
   char* data;
   ssize_t size;
@@ -21,8 +23,8 @@ typedef struct {
 } data_header_t;
 
 //given opcode and filename create a msg header
-void make_msg_header(msg_header_t* header, int16_t op, const char* filename);
-void change_opcode(msg_header_t* header, int16_t op);
+void make_msg_header(msg_header_t* header, uint16_t op, const char* filename);
+void change_opcode(msg_header_t* header, uint16_t op);
 void free_msg_header(msg_header_t* header);
 
 //given a filename create a data "header"

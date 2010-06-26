@@ -2,22 +2,25 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 
-void make_msg_header(msg_header_t* header, int16_t op, const char* filename) {
-  int32_t sz_fn = strlen(filename);
-  header->data = calloc(6 + sz_fn, 1);
+const char* op_tbl[] = { "", "REQUEST_DOWN", "REPLY_DOWN", "REQUEST_UP", "REPLY_UP", "ERROR" };
+
+void make_msg_header(msg_header_t* header, uint16_t op, const char* filename) {
+  uint32_t sz_fn = strlen(filename);
+  header->data = calloc(2 + 4 + sz_fn, 1); //opcode + fn_len + sz_fn
   //would sizeof(int16_t) be clearer?
-  memcpy(header->data, &op, 2); 
-  memcpy(header->data + 2, &sz_fn , 4);
-  header->data[0] = op;
-  header->data[2] = sz_fn;
-
-  memcpy(&(header->data[6]), filename, sz_fn);
+  uint16_t op_net = htons(op);
+  uint32_t sz_fn_net = htonl(sz_fn);
+  memcpy(header->data, &op_net, 2); 
+  memcpy(header->data + 2, &sz_fn_net , 4);
+  memcpy(header->data + 6, filename, sz_fn);
   header->size = 6 + sz_fn;
 }
 
-void change_opcode(msg_header_t* header, int16_t op) {
-  memcpy(header->data, &op, 2);
+void change_opcode(msg_header_t* header, uint16_t op) {
+  uint16_t op_net = htons(op);
+  memcpy(header->data, &op_net, 2);
 }
 
 void free_msg_header(msg_header_t* header) {
@@ -33,7 +36,7 @@ void make_data_header(data_header_t* header, const char* filename) {
   }
 
   fseek(fd, 0L, SEEK_END);
-  int32_t sz_file = (int32_t)ftell(fd);
+  uint32_t sz_file = (uint32_t)ftell(fd);
   fseek(fd, 0L, SEEK_SET);
 
   header->data = malloc(4 + sz_file);
@@ -44,10 +47,11 @@ void make_data_header(data_header_t* header, const char* filename) {
   }
 
   header->size = 4 + sz_file;
-  header->data[0] = sz_file;
+  uint32_t sz_file_net = htonl(sz_file);
+  memcpy(header->data, &sz_file_net, 4);
   
   //fill the buffer
-  if(sz_file != (int32_t)fread(header->data + 4, 1, sz_file, fd)) {
+  if(sz_file != (uint32_t)fread(header->data + 4, 1, sz_file, fd)) {
     fprintf(stderr, "File buffer borked\n");
     exit(EXIT_FAILURE);
   }

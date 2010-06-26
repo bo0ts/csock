@@ -10,6 +10,25 @@
 
 #define PORT "6969"
 
+static const char* prefix = "./downloading/";
+
+//free it yourself
+static char* prefix_it(const char* in) {
+  char* out;
+  size_t len1, len2;
+  len1 = strlen(prefix); len2 = strlen(in);
+  out = malloc(len1 + len2  + 1);
+  if(out == NULL) {
+    fprintf(stderr, "PANIC!!!!!");
+    exit(EXIT_FAILURE);
+  }
+
+  memcpy(out, prefix, len1);
+  strcpy(out + len1, in);
+  return out;
+}
+
+
 //returns a socket connected to the server
 int connect_serv(const char* server) {
   struct addrinfo hints;
@@ -22,7 +41,7 @@ int connect_serv(const char* server) {
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = 0;
-  hints.ai_protocol = 0;          /* Any protocol */
+  hints.ai_protocol = PF_INET;          /* Any protocol */
 
   s = getaddrinfo(server, PORT, NULL, &result);
 
@@ -42,6 +61,7 @@ int connect_serv(const char* server) {
       break;                  /* Success */
 
     close(sfd);
+    sfd = -1;
   }
 
   if (rp == NULL) {               /* No address succeeded */
@@ -56,7 +76,11 @@ int connect_serv(const char* server) {
 
 int put(const char* file, const char* server) {
   int sfd = connect_serv(server);
-
+  if(sfd < 0) {
+    fprintf(stderr, "Error connecting");
+    exit(EXIT_FAILURE);
+  }
+    
   //create headers and send them
   msg_header_t msg_header;
   data_header_t data_header;
@@ -64,7 +88,7 @@ int put(const char* file, const char* server) {
   make_msg_header(&msg_header, REQUEST_UP, file);
   make_data_header(&data_header, file);
   
-  if(msg_header.size != write(sfd, msg_header.data, msg_header.size)) {
+  if(msg_header.size != send(sfd, msg_header.data, msg_header.size, 0)) {
     fprintf(stderr, "Socket write with msg_header failed\n");
     exit(EXIT_FAILURE);
   }
@@ -92,6 +116,8 @@ int put(const char* file, const char* server) {
   
   if(0 != memcmp(rep_buffer, msg_header.data, msg_header.size)) {
     fprintf(stderr, "Reply was bogus, go panic\n");
+  } else {
+    printf("Success!\n");
   }
 
   free_msg_header(&msg_header);
@@ -102,6 +128,75 @@ int put(const char* file, const char* server) {
 }
 
 int get(const char* file, const char* server) {
+  int sfd = connect_serv(server);
+  if(sfd < 0) {
+    fprintf(stderr, "Error connecting");
+    exit(EXIT_FAILURE);
+  }
+
+  msg_header_t msg_header;
+  make_msg_header(&msg_header, REQUEST_DOWN, file);
+  if(msg_header.size != send(sfd, msg_header.data, msg_header.size, 0)) {
+    fprintf(stderr, "Socket write with msg_header failed\n");
+    exit(EXIT_FAILURE);
+  }
+  change_opcode(&msg_header, REPLY_DOWN);
+
+  char* rep_buffer = calloc(msg_header.size, 1);
+  
+  if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
+    fprintf(stderr, "Socket read failed\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
+    fprintf(stderr, "Socket read failed\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  if(0 != memcmp(rep_buffer, msg_header.data, msg_header.size)) {
+    fprintf(stderr, "Reply was bogus, go panic\n");
+    exit(EXIT_FAILURE);
+  }
+
+  int file;
+  char buffer[4];
+  if(4 != recv(fd, buffer, 4, 0)) {
+    fprintf(stderr, "read failed\n");
+    return 0;
+  }
+
+  uint32_t file_sz = 0;
+  memcpy(&file_sz, buffer, 4);
+  file_sz = ntohl(file_sz);
+
+  char* file_buffer;
+  file_buffer = calloc(file_sz, 1);
+  if(file_buffer == NULL) {
+    fprintf(stderr, "PANIC!!!!!");
+    free(file_buffer);
+    exit(EXIT_FAILURE);
+  }
+
+  if(file_sz != recv(fd, file_buffer, file_sz, 0)) {
+    fprintf(stderr, "read failed\n");
+    free(file_buffer);
+    return 0;
+  }
+
+  char* fn_altered = prefix_it(filename);
+  file = open(fn_altered, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+  if(file_sz != write(file, file_buffer, file_sz)) {
+    //bork and send error
+    fprintf(stderr, "File write failed\n");
+    free(file_buffer);
+  }
+
+  free(file_buffer);
+  free(fn_altered);
+  free_msg_header(&msg_header);
+  free(rep_buffer);
+  close(sfd);
 
   return EXIT_SUCCESS;
 }
