@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <unistd.h>
 
@@ -10,24 +12,7 @@
 
 #define PORT "6969"
 
-static const char* prefix = "./downloading/";
-
-//free it yourself
-static char* prefix_it(const char* in) {
-  char* out;
-  size_t len1, len2;
-  len1 = strlen(prefix); len2 = strlen(in);
-  out = malloc(len1 + len2  + 1);
-  if(out == NULL) {
-    fprintf(stderr, "PANIC!!!!!");
-    exit(EXIT_FAILURE);
-  }
-
-  memcpy(out, prefix, len1);
-  strcpy(out + len1, in);
-  return out;
-}
-
+static const char* prefix = "./client_dir/";
 
 //returns a socket connected to the server
 int connect_serv(const char* server) {
@@ -83,22 +68,16 @@ int put(const char* file, const char* server) {
     
   //create headers and send them
   msg_header_t msg_header;
-  data_header_t data_header;
-  
   make_msg_header(&msg_header, REQUEST_UP, file);
-  make_data_header(&data_header, file);
-  
+
   if(msg_header.size != send(sfd, msg_header.data, msg_header.size, 0)) {
     fprintf(stderr, "Socket write with msg_header failed\n");
     exit(EXIT_FAILURE);
   }
 
-  if(data_header.size != write(sfd, data_header.data, data_header.size)) {
-    fprintf(stderr, "Socket write with data_header failed\n");
-    exit(EXIT_FAILURE);
+  if(file_to_socket(sfd, file) == -1) {
+    fprintf(stderr, "Failed to transmit file\n");
   }
-
-  free_data_header(&data_header);
 
   printf("Checking for reply\n");
 
@@ -108,12 +87,13 @@ int put(const char* file, const char* server) {
   change_opcode(&msg_header, REPLY_UP);
 
   char* rep_buffer = calloc(msg_header.size, 1);
-  
+
   if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
     fprintf(stderr, "Socket read failed\n");
     exit(EXIT_FAILURE);
   }
-  
+
+  //todo: differ between error_opcode and bogus  
   if(0 != memcmp(rep_buffer, msg_header.data, msg_header.size)) {
     fprintf(stderr, "Reply was bogus, go panic\n");
   } else {
@@ -134,71 +114,34 @@ int get(const char* file, const char* server) {
     exit(EXIT_FAILURE);
   }
 
+  //create headers and send them
   msg_header_t msg_header;
   make_msg_header(&msg_header, REQUEST_DOWN, file);
+
   if(msg_header.size != send(sfd, msg_header.data, msg_header.size, 0)) {
     fprintf(stderr, "Socket write with msg_header failed\n");
     exit(EXIT_FAILURE);
   }
+  
   change_opcode(&msg_header, REPLY_DOWN);
-
   char* rep_buffer = calloc(msg_header.size, 1);
-  
+
   if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
     fprintf(stderr, "Socket read failed\n");
     exit(EXIT_FAILURE);
   }
-  
-  if(msg_header.size != read(sfd, rep_buffer, msg_header.size)) {
-    fprintf(stderr, "Socket read failed\n");
-    exit(EXIT_FAILURE);
-  }
-  
+
   if(0 != memcmp(rep_buffer, msg_header.data, msg_header.size)) {
     fprintf(stderr, "Reply was bogus, go panic\n");
-    exit(EXIT_FAILURE);
+  } else {
+    char* filename_local = prefix_it(file, prefix);
+    int retval = socket_to_file(sfd, filename_local);
+    free(filename_local);
+    return retval;
   }
 
-  int file;
-  char buffer[4];
-  if(4 != recv(fd, buffer, 4, 0)) {
-    fprintf(stderr, "read failed\n");
-    return 0;
-  }
+  return -1;
 
-  uint32_t file_sz = 0;
-  memcpy(&file_sz, buffer, 4);
-  file_sz = ntohl(file_sz);
-
-  char* file_buffer;
-  file_buffer = calloc(file_sz, 1);
-  if(file_buffer == NULL) {
-    fprintf(stderr, "PANIC!!!!!");
-    free(file_buffer);
-    exit(EXIT_FAILURE);
-  }
-
-  if(file_sz != recv(fd, file_buffer, file_sz, 0)) {
-    fprintf(stderr, "read failed\n");
-    free(file_buffer);
-    return 0;
-  }
-
-  char* fn_altered = prefix_it(filename);
-  file = open(fn_altered, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-  if(file_sz != write(file, file_buffer, file_sz)) {
-    //bork and send error
-    fprintf(stderr, "File write failed\n");
-    free(file_buffer);
-  }
-
-  free(file_buffer);
-  free(fn_altered);
-  free_msg_header(&msg_header);
-  free(rep_buffer);
-  close(sfd);
-
-  return EXIT_SUCCESS;
 }
 
 int main(int argc, char* argv[]) {

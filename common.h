@@ -31,4 +31,10 @@ void free_msg_header(msg_header_t* header);
 void make_data_header(data_header_t* header, const char* filename);
 void free_data_header(data_header_t* header);
 
+//file socket interaction
+int file_to_socket(int sock, const char* filename);
+int socket_to_file(int sock, const char* filename);
+
+char* prefix_it(const char* in, const char* prefix);
+
 #endif //header guard

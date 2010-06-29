@@ -12,68 +12,20 @@
 
 #define PORT "6969"
 
-static const char* prefix = "./incoming/";
-
-//free it yourself
-static char* prefix_it(const char* in) {
-  char* out;
-  size_t len1, len2;
-  len1 = strlen(prefix); len2 = strlen(in);
-  out = malloc(len1 + len2  + 1);
-  if(out == NULL) {
-    fprintf(stderr, "PANIC!!!!!");
-    exit(EXIT_FAILURE);
-  }
-
-  memcpy(out, prefix, len1);
-  strcpy(out + len1, in);
-  return out;
-}
-
+static const char* prefix = "./server_dir/";
 
 int put(int fd, const char* filename) {
-  int file;
-  char buffer[4];
-  if(4 != recv(fd, buffer, 4, 0)) {
-    fprintf(stderr, "read failed\n");
-    return 0;
-  }
-
-  uint32_t file_sz = 0;
-  memcpy(&file_sz, buffer, 4);
-  file_sz = ntohl(file_sz);
-
-  char* file_buffer;
-  file_buffer = calloc(file_sz, 1);
-  if(file_buffer == NULL) {
-    fprintf(stderr, "PANIC!!!!!");
-    return 0;
-  }
-
-  if(file_sz != recv(fd, file_buffer, file_sz, 0)) {
-    fprintf(stderr, "read failed\n");
-    free(file_buffer);
-    return 0;
-  }
-
-  char* fn_altered = prefix_it(filename);
-  file = open(fn_altered, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-  //file = open("test.txt", O_WRONLY | O_CREAT);
-  if(file_sz != write(file, file_buffer, file_sz)) {
-    //bork and send error
-    fprintf(stderr, "File write failed\n");
-    free(file_buffer);
-    free(fn_altered);
-    return 0;
-  }
-
-  free(file_buffer);
-  free(fn_altered);
-  return 1;
+  char* filename_local = prefix_it(filename, prefix);
+  int retval = socket_to_file(fd, filename_local);
+  free(filename_local);
+  return retval;
 }
 
-void get(int fd, const char* filename) {
-
+int get(int fd, const char* filename) {
+  char* filename_local = prefix_it(filename, prefix);
+  int retval = file_to_socket(fd, filename_local);
+  free(filename_local);
+  return retval;
 }
 
 
@@ -161,20 +113,42 @@ int main(void) {
     msg_header_t rep;
 
     if(op == REQUEST_UP) {
-      if(put(sock, fn) == 1) {
+      if(put(sock, fn) == 0) {
 	make_msg_header(&rep, REPLY_UP, fn);
 	if(rep.size != write(sock, rep.data, rep.size)) {
 	  fprintf(stderr, "write reply failed\n");
 	} 
       } else {
 	make_msg_header(&rep, ERROR, fn);
+	if(rep.size != write(sock, rep.data, rep.size)) {
+	  fprintf(stderr, "write reply failed\n");
+	} 
       }
     } else if(op == REQUEST_DOWN) {
-      get(sock, fn);
+      char* check = prefix_it(fn, prefix);
+      FILE* file = fopen(check, "rb");
+      if(!file) {
+	fprintf(stderr, "File error, sending error\n");
+	make_msg_header(&rep, ERROR, fn);
+	if(rep.size != write(sock, rep.data, rep.size)) {
+	  fprintf(stderr, "write reply failed\n");
+	}
+      } else {
+	printf("Sending header and file\n");
+	make_msg_header(&rep, REPLY_DOWN, fn);
+	if(rep.size != write(sock, rep.data, rep.size)) {
+	  fprintf(stderr, "write header failed\n");
+	} 
+	fclose(file);
+	if(file_to_socket(sock, check) != 0) {
+	  fprintf(stderr, "write reply failed\n");
+	}
+      }
+      free(check);
     } else {
       printf("Bogus opcode, rejecting\n");
     }
-    
+
     free_msg_header(&rep);
     close(sock);
   }
